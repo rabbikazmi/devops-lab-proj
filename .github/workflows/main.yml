@@ -30,6 +30,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Install Docker Compose
+        run: pip install docker-compose
+
       - name: Validate Docker Compose
         run: docker-compose config -q
 
