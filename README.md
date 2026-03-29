@@ -1,47 +1,96 @@
 # IaC Simulator
 
-A simple Infrastructure as Code project demonstrating Docker Compose, Ansible, and DevOps automation working together.
+> A beginner-friendly Infrastructure as Code project demonstrating Docker Compose and Ansible working together — provision containers, verify services, and monitor everything from a live dashboard.
 
-## What This Project Does
+---
 
-- **Docker Compose**: Provisions containers (Nginx web server + PostgreSQL database + Redis cache)
-- **Ansible**: Verifies services are running and healthy
-- **Frontend**: Interactive dashboard with real-time updates on localhost:8080
+## Overview
 
-## Quick Start (3 Steps)
+| Component | Role |
+|-----------|------|
+| **Docker Compose** | Provisions Nginx, PostgreSQL, and Redis containers |
+| **Ansible** | Verifies services are running and healthy |
+| **Dashboard** | Interactive UI with real-time metrics at `http://localhost:8080` |
+
+---
+
+## Quick Start
 
 ```bash
-# 1. Start services with Docker Compose
+# 1. Start all services
 docker-compose up -d
 
-# 2. Verify services with Ansible
+# 2. Verify with Ansible
 ansible-playbook -i ansible/inventory.ini ansible/site.yml
 
-# 3. Open dashboard in browser
-# http://localhost:8080
+# 3. Open the dashboard
+open http://localhost:8080
 ```
 
-**That's it!** All services are now running.
+That's it — all three services will be running in under a minute.
 
-## Available Commands
+---
+
+## Requirements
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (includes Docker Compose)
+- [Ansible](https://docs.ansible.com/ansible/latest/installation_guide/index.html) 2.10+
+- Bash shell
+
+**Estimated setup time:** 5–10 minutes (after tools are installed)
+
+---
+
+## Project Structure
+
+```
+iac-simulator/
+├── docker-compose.yml       # Nginx, PostgreSQL, and Redis service definitions
+├── ansible/
+│   ├── inventory.ini        # Ansible host configuration
+│   └── site.yml             # Service verification playbook
+├── frontend/
+│   └── index.html           # Dashboard UI
+├── scripts/
+│   └── smoke-test.sh        # Automated smoke tests
+├── README.md
+└── .gitignore
+```
+
+---
+
+## Service Reference
+
+| Service | URL / Host | Credentials |
+|---------|-----------|-------------|
+| Dashboard (Nginx) | http://localhost:8080 | — |
+| PostgreSQL | `localhost:5432` | user: `admin`, password: *(your-password)* |
+| Redis | `localhost:6379` | — |
+
+---
+
+## Common Commands
 
 ```bash
-# Start all services in background
+# Start services in the background
 docker-compose up -d
 
 # Stop all services
 docker-compose down
 
-# View running containers
+# Check running containers
 docker-compose ps
 
-# View service logs
+# View all logs
 docker-compose logs
 
-# View specific service logs
+# View logs for a specific service
 docker-compose logs nginx
 docker-compose logs postgres
+docker-compose logs redis
 ```
+
+---
 
 ## Testing Services
 
@@ -49,192 +98,110 @@ docker-compose logs postgres
 # Test Nginx
 curl http://localhost:8080
 
-# Test PostgreSQL connection
+# Test PostgreSQL
 psql -h localhost -U postgres -d iac_simulator
 # Password: example
 
-# Test Redis connection
+# Test Redis
 redis-cli -h localhost
+nc -z -w2 localhost 6379 && echo "Redis OK"
 
-# Run automated tests
+# Run automated smoke tests
 ./scripts/smoke-test.sh
 ```
 
-## Tech Stack
+---
 
-- Docker Compose (Container orchestration)
-- Ansible (Configuration management & verification)
-- Nginx (Web server)
-- PostgreSQL (Database)
-- Redis (Caching layer)
+## Dashboard
 
-## Project Structure
+The interactive dashboard at `http://localhost:8080` updates every 2 seconds and displays:
 
-```
-iac-simulator/
-├── docker-compose.yml      # Service definitions (Nginx, PostgreSQL, Redis)
-├── ansible/
-│   ├── inventory.ini       # Ansible hosts
-│   └── site.yml            # Service verification playbook
-├── frontend/
-│   └── index.html          # Dashboard UI
-├── scripts/
-│   └── smoke-test.sh       # Automated tests
-├── README.md               # This file
-└── .gitignore
-```
+- **Live Status** — Real-time health for all three containers
+- **Uptime Counters** — How long each service has been running
+- **CPU Usage** — Animated usage bars per container
+- **Live Logs** — Streaming deployment log entries
+- **Ansible Playbook** — Task execution status
 
-## Dashboard Features
+---
 
-Access the interactive dashboard at http://localhost:8080:
+## CI/CD Pipeline (GitHub Actions)
 
-- Real-time service status (3 services: Web, Database, Cache)
-- Container health checks
-- Live uptime counters
-- System metrics display
-- Markdown formatted logs
+A GitHub Actions workflow is included that runs automatically on every push or pull request to `main`.
 
-## Learning Outcomes
+**Pipeline steps:**
 
-By exploring this project, you'll understand:
+1. **Terraform Validate** — Validates IaC configuration
+2. **Ansible Lint** — Lints configuration management files
+3. **Security Scan** — Runs basic security checks
 
-1. **Docker Compose**: How to define multi-container applications (3 services)
-2. **Ansible**: How to automate verification and configuration
-3. **DevOps Basics**: Infrastructure automation and monitoring
-4. **Caching Concepts**: Understanding Redis in a stack
-5. **Local Development**: Running full production-like stacks locally
+To enable, push this repository to GitHub and view results under the **Actions** tab.
+
+---
 
 ## Troubleshooting
 
-**Services won't start:**
+### Services won't start
+
 ```bash
-# Check Docker is running
+# Check that Docker is running
 docker ps
 
-# Check for port conflicts
+# Inspect logs for errors
 docker-compose logs
 ```
 
-**Ansible playbook fails:**
+### Ansible playbook fails
+
 ```bash
-# Verify inventory
+# Verify host connectivity
 ansible -i ansible/inventory.ini all -m ping
 
 # Run playbook with verbose output
 ansible-playbook -i ansible/inventory.ini ansible/site.yml -v
 ```
 
-**Can't access dashboard:**
-- Wait 10 seconds for nginx to start
-- Refresh browser (Ctrl+R or Cmd+R)
-- Check: `curl http://localhost:8080`
+### Can't access the dashboard
 
-## Next Steps
+1. Wait ~10 seconds for Nginx to finish starting
+2. Refresh your browser (`Ctrl+R` / `Cmd+R`)
+3. Confirm Nginx is responding: `curl http://localhost:8080`
 
-1. Modify `docker-compose.yml` to add more services
-2. Update `ansible/site.yml` with additional checks
-3. Customize the frontend dashboard in `frontend/index.html`
-4. Add more services to the Docker Compose stack
+### Port 8080 is already in use
 
-## Requirements
-
-- Docker & Docker Compose (Docker Desktop includes both)
-- Ansible 2.10+
-- Bash shell (for smoke test script)
-
-## License & Notes
-
-This is a learning project. Feel free to modify and extend it!
-
-```
-
-**Check Redis:**
-```bash
-nc -z -w2 localhost 6379 && echo "Redis OK"
-```
-
-**List Containers:**
-```bash
-docker ps
-```
-
-## Dashboard Features
-
-The interactive dashboard at `http://localhost:8080` displays:
-
-- **Live Status**: Real-time container health and status
-- **Uptime Counter**: Shows how long each service has been running
-- **CPU Usage**: Animated CPU usage bars for each container
-- **Live Logs**: Streaming log entries from deployment
-- **Terraform State**: Resource tracking and status
-- **Ansible Playbook**: Task execution status
-- **GitHub Actions**: CI/CD pipeline results
-
-The dashboard updates every 2 seconds with resource usage and service status changes!
-
-## 🗑️ Clean Up
-
-```bash
-cd terraform
-terraform destroy
-# Type "yes" when prompted
-```
-
-## Service URLs
-
-- Dashboard: http://localhost:8080
-- PostgreSQL: localhost:5432 (user: admin, password: (your-password))
-- Redis: localhost:6379
-
-## CI/CD Pipeline (GitHub Actions)
-
-The project includes a simple GitHub Actions workflow that runs on push/PR:
-
-**Pipeline Steps:**
-1. **Terraform Validate** - Validates IaC configuration
-2. **Ansible Lint** - Lints configuration management code
-3. **Security Scan** - Basic security checks
-
-To enable:
-1. Push this repository to GitHub
-2. Workflow runs automatically on push to `main`
-3. View results in Actions tab
-
-## Learning Outcomes
-
-- How to use Terraform for Docker provisioning  
-- How to run simple Ansible playbooks  
-- How to manage infrastructure locally  
-- Basic DevOps workflow concepts  
-- Setting up GitHub Actions CI/CD pipeline  
-- Multi-container orchestration
-
-## Troubleshooting
-
-**For detailed troubleshooting, see [SETUP.md - Troubleshooting Section](SETUP.md#troubleshooting)**
-
-Quick fixes:
-```bash
-# Docker not running?
-# → Start Docker Desktop app (Windows/Mac) or: sudo systemctl start docker (Linux)
-
-# Port 8080 already in use?
-# → Edit terraform/variables.tf and change: nginx_port = 8081
-
-# Containers not starting?
-# → Run: docker ps (to check status)
-# → Run: docker logs iac-nginx (to see errors)
-```
-
-## Notes
-
-This is a minimal beginner-friendly project. For production use, consider:
-- Using remote state storage
-- Adding monitoring and logging
-- Implementing security policies
-- Adding CI/CD pipeline
+Edit `docker-compose.yml` and change the Nginx port mapping, e.g. `8081:80`.
 
 ---
 
-**Total Setup Time**: 5-10 minutes (after tools installed)  
-**Difficulty**: Beginner
+## Learning Outcomes
+
+By exploring this project you'll get hands-on experience with:
+
+- **Docker Compose** — Defining and managing multi-container applications
+- **Ansible** — Automating service verification and configuration
+- **DevOps basics** — Infrastructure automation and health monitoring
+- **Redis** — Understanding a caching layer in a real stack
+- **CI/CD** — Setting up GitHub Actions for IaC workflows
+
+---
+
+## Next Steps
+
+1. Add more services to `docker-compose.yml`
+2. Extend `ansible/site.yml` with additional health checks
+3. Customize the dashboard in `frontend/index.html`
+4. Connect a remote state backend for production-ready IaC
+
+---
+
+## Clean Up
+
+```bash
+docker-compose down
+```
+
+To remove volumes (database data) as well:
+
+```bash
+docker-compose down -v
+```
+
