@@ -199,7 +199,7 @@ By exploring this project you'll get hands-on experience with:
 docker-compose down
 ```
 
-To remove volumes (database data) as well:
+To remove volumes(database data) as well:
 
 ```bash
 docker-compose down -v
