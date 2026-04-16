@@ -4,6 +4,17 @@ version: '3.8'
 # Simple infrastructure setup with Nginx web server, PostgreSQL database, and Redis cache
 
 services:
+  # Dashboard API - exposes Docker container status to frontend
+  dashboard-api:
+    build: ./backend
+    container_name: iac-dashboard-api
+    ports:
+      - "3001:3001"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - iac-network
+
   # Web server - serves static dashboard
   nginx:
     image: nginx:alpine

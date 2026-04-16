@@ -1,0 +1,14 @@
+{
+  "name": "iac-simulator-dashboard-api",
+  "version": "1.0.0",
+  "description": "Docker status API for IaC simulator dashboard",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dockerode": "^4.0.7",
+    "express": "^4.21.2"
+  }
+}
