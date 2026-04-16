@@ -225,6 +225,22 @@
     gap: 12px;
   }
 
+  .chart-grid {
+    display: grid;
+    grid-template-columns: 1.8fr 1fr 1fr;
+    gap: 12px;
+  }
+
+  .chart-wrap {
+    padding: 12px 16px 16px;
+    height: 230px;
+  }
+
+  .chart-wrap canvas {
+    width: 100% !important;
+    height: 100% !important;
+  }
+
   .stat-card {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -468,6 +484,71 @@
     display: none;
   }
 
+  .toast-stack {
+    position: fixed;
+    top: 68px;
+    right: 16px;
+    z-index: 1200;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: min(360px, calc(100vw - 24px));
+    pointer-events: none;
+  }
+
+  .toast {
+    pointer-events: auto;
+    display: grid;
+    grid-template-columns: 1fr 20px;
+    align-items: start;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-bright);
+    background: var(--surface);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.6;
+    transform: translateY(-4px);
+    opacity: 0;
+    animation: toast-in 180ms ease-out forwards;
+  }
+
+  .toast.toast-out {
+    animation: toast-out 180ms ease-in forwards;
+  }
+
+  .toast-ok { border-left: 3px solid var(--green); }
+  .toast-warn { border-left: 3px solid var(--amber); }
+  .toast-err { border-left: 3px solid var(--red); }
+  .toast-info { border-left: 3px solid var(--blue); }
+
+  .toast-close {
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-size: 14px;
+    font-family: var(--sans);
+    cursor: pointer;
+    line-height: 1;
+    padding: 0;
+  }
+
+  .toast-close:hover {
+    color: var(--text);
+  }
+
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes toast-out {
+    from { opacity: 1; transform: translateY(0); }
+    to { opacity: 0; transform: translateY(-4px); }
+  }
+
   .loading-spinner {
     width: 48px;
     height: 48px;
@@ -538,6 +619,7 @@
   /* Responsive tweak */
   @media (max-width: 900px) {
     .grid-two { grid-template-columns: 1fr; }
+    .chart-grid { grid-template-columns: 1fr; }
     .stat-row { grid-template-columns: repeat(2, 1fr); }
     .net-row { grid-template-columns: 1fr; }
     .service-row { grid-template-columns: 20px 1fr 70px; }
@@ -585,6 +667,8 @@
   </div>
 </header>
 
+<div class="toast-stack" id="toastStack" aria-live="polite" aria-atomic="false"></div>
+
 <main class="main hidden">
 
   <!-- Page header -->
@@ -617,6 +701,38 @@
       <div class="stat-label">ansible plays</div>
       <div class="stat-value">5/5</div>
       <div class="stat-sub">all tasks ok</div>
+    </div>
+  </div>
+
+  <div class="chart-grid">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">CPU Trend (Live)</div>
+        <span class="card-badge badge-blue">last 120s</span>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="cpuTrendChart"></canvas>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Container Status</div>
+        <span class="card-badge badge-green">distribution</span>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="statusDonutChart"></canvas>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Uptime</div>
+        <span class="card-badge badge-amber">minutes</span>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="uptimeBarChart"></canvas>
+      </div>
     </div>
   </div>
 
@@ -802,8 +918,37 @@
 
 </main>
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <script>
 const THEME_KEY = 'iac-dashboard-theme';
+const MAX_CPU_POINTS = 60;
+let dashboardCharts = null;
+
+function getCssVar(name) {
+  return getComputedStyle(document.body).getPropertyValue(name).trim();
+}
+
+function showToast(type, message) {
+  const toastStack = document.getElementById('toastStack');
+  if (!toastStack) return;
+
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML = `<div>${message}</div><button class="toast-close" aria-label="Close">&times;</button>`;
+
+  const closeBtn = toast.querySelector('.toast-close');
+  let isClosed = false;
+  const dismiss = () => {
+    if (isClosed) return;
+    isClosed = true;
+    toast.classList.add('toast-out');
+    setTimeout(() => toast.remove(), 180);
+  };
+
+  closeBtn.addEventListener('click', dismiss);
+  toastStack.appendChild(toast);
+  setTimeout(dismiss, 5000);
+}
 
 function applyTheme(theme) {
   const isLight = theme === 'light';
@@ -813,6 +958,10 @@ function applyTheme(theme) {
   if (toggleButton) {
     toggleButton.textContent = isLight ? 'dark mode' : 'light mode';
     toggleButton.setAttribute('aria-pressed', isLight ? 'true' : 'false');
+  }
+
+  if (dashboardCharts && typeof dashboardCharts.refreshTheme === 'function') {
+    dashboardCharts.refreshTheme();
   }
 }
 
@@ -857,6 +1006,181 @@ const CHECK_ID_BY_CONTAINER = {
   'iac-postgres': 'check-postgres',
   'iac-redis': 'check-redis'
 };
+const CONTAINER_NAMES = {
+  'iac-nginx': 'web-app',
+  'iac-postgres': 'postgres-db',
+  'iac-redis': 'redis-cache'
+};
+
+function createDashboardCharts() {
+  if (typeof Chart === 'undefined') {
+    return null;
+  }
+
+  const green = getCssVar('--green');
+  const amber = getCssVar('--amber');
+  const blue = getCssVar('--blue');
+  const red = getCssVar('--red');
+  const textColor = getCssVar('--muted');
+  const borderColor = getCssVar('--border');
+
+  const cpuTrendChart = new Chart(document.getElementById('cpuTrendChart'), {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        { label: 'web-app', data: [], borderColor: green, backgroundColor: green, pointRadius: 0, tension: 0.25 },
+        { label: 'postgres-db', data: [], borderColor: amber, backgroundColor: amber, pointRadius: 0, tension: 0.25 },
+        { label: 'redis-cache', data: [], borderColor: blue, backgroundColor: blue, pointRadius: 0, tension: 0.25 }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: { labels: { color: textColor, boxWidth: 10, boxHeight: 10 } }
+      },
+      scales: {
+        x: { ticks: { color: textColor, maxTicksLimit: 6 }, grid: { color: borderColor } },
+        y: { min: 0, max: 100, ticks: { color: textColor }, grid: { color: borderColor } }
+      }
+    }
+  });
+
+  const statusDonutChart = new Chart(document.getElementById('statusDonutChart'), {
+    type: 'doughnut',
+    data: {
+      labels: ['Running', 'Non-running', 'Missing'],
+      datasets: [{
+        data: [3, 0, 0],
+        backgroundColor: [green, amber, red],
+        borderColor,
+        borderWidth: 1
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      cutout: '60%',
+      plugins: {
+        legend: { position: 'bottom', labels: { color: textColor, boxWidth: 10, boxHeight: 10 } }
+      }
+    }
+  });
+
+  const uptimeBarChart = new Chart(document.getElementById('uptimeBarChart'), {
+    type: 'bar',
+    data: {
+      labels: ['web-app', 'postgres-db', 'redis-cache'],
+      datasets: [{
+        label: 'Uptime (min)',
+        data: [0, 0, 0],
+        backgroundColor: [green, amber, blue],
+        borderRadius: 4
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: { display: false }
+      },
+      scales: {
+        x: { ticks: { color: textColor }, grid: { color: borderColor } },
+        y: { ticks: { color: textColor }, grid: { color: borderColor } }
+      }
+    }
+  });
+
+  return {
+    cpuTrendChart,
+    statusDonutChart,
+    uptimeBarChart,
+    refreshTheme() {
+      const updatedGreen = getCssVar('--green');
+      const updatedAmber = getCssVar('--amber');
+      const updatedBlue = getCssVar('--blue');
+      const updatedRed = getCssVar('--red');
+      const updatedTextColor = getCssVar('--muted');
+      const updatedBorderColor = getCssVar('--border');
+
+      cpuTrendChart.data.datasets[0].borderColor = updatedGreen;
+      cpuTrendChart.data.datasets[0].backgroundColor = updatedGreen;
+      cpuTrendChart.data.datasets[1].borderColor = updatedAmber;
+      cpuTrendChart.data.datasets[1].backgroundColor = updatedAmber;
+      cpuTrendChart.data.datasets[2].borderColor = updatedBlue;
+      cpuTrendChart.data.datasets[2].backgroundColor = updatedBlue;
+      cpuTrendChart.options.plugins.legend.labels.color = updatedTextColor;
+      cpuTrendChart.options.scales.x.ticks.color = updatedTextColor;
+      cpuTrendChart.options.scales.y.ticks.color = updatedTextColor;
+      cpuTrendChart.options.scales.x.grid.color = updatedBorderColor;
+      cpuTrendChart.options.scales.y.grid.color = updatedBorderColor;
+
+      statusDonutChart.data.datasets[0].backgroundColor = [updatedGreen, updatedAmber, updatedRed];
+      statusDonutChart.data.datasets[0].borderColor = updatedBorderColor;
+      statusDonutChart.options.plugins.legend.labels.color = updatedTextColor;
+
+      uptimeBarChart.data.datasets[0].backgroundColor = [updatedGreen, updatedAmber, updatedBlue];
+      uptimeBarChart.options.scales.x.ticks.color = updatedTextColor;
+      uptimeBarChart.options.scales.y.ticks.color = updatedTextColor;
+      uptimeBarChart.options.scales.x.grid.color = updatedBorderColor;
+      uptimeBarChart.options.scales.y.grid.color = updatedBorderColor;
+
+      cpuTrendChart.update('none');
+      statusDonutChart.update('none');
+      uptimeBarChart.update('none');
+    },
+    update(containerMap) {
+      const nowLabel = new Date().toLocaleTimeString('en-US', { hour12: false });
+      cpuTrendChart.data.labels.push(nowLabel);
+      if (cpuTrendChart.data.labels.length > MAX_CPU_POINTS) {
+        cpuTrendChart.data.labels.shift();
+      }
+
+      TRACKED_CONTAINERS.forEach((containerId, index) => {
+        const snapshot = containerMap.get(containerId);
+        const usage = snapshot && snapshot.status === 'running' ? Number(snapshot.cpuPercent || 0) : 0;
+        cpuTrendChart.data.datasets[index].data.push(usage);
+        if (cpuTrendChart.data.datasets[index].data.length > MAX_CPU_POINTS) {
+          cpuTrendChart.data.datasets[index].data.shift();
+        }
+      });
+
+      let running = 0;
+      let nonRunning = 0;
+      let missing = 0;
+      const uptimeMinutes = [];
+
+      TRACKED_CONTAINERS.forEach((containerId) => {
+        const snapshot = containerMap.get(containerId);
+        if (!snapshot || snapshot.status === 'not_found') {
+          missing++;
+          uptimeMinutes.push(0);
+          return;
+        }
+
+        if (snapshot.status === 'running') {
+          running++;
+        } else {
+          nonRunning++;
+        }
+
+        uptimeMinutes.push(snapshot.uptimeSeconds ? Math.round(snapshot.uptimeSeconds / 60) : 0);
+      });
+
+      statusDonutChart.data.datasets[0].data = [running, nonRunning, missing];
+      uptimeBarChart.data.labels = TRACKED_CONTAINERS.map((id) => CONTAINER_NAMES[id]);
+      uptimeBarChart.data.datasets[0].data = uptimeMinutes;
+
+      cpuTrendChart.update('none');
+      statusDonutChart.update('none');
+      uptimeBarChart.update('none');
+    }
+  };
+}
 
 function formatUptime(seconds) {
   if (seconds === null || seconds === undefined) {
@@ -976,6 +1300,8 @@ function startDashboardUpdates() {
   const previousStatuses = {};
   let lastApiErrorAt = 0;
 
+  dashboardCharts = createDashboardCharts();
+
   function addLogEntry(type, msg) {
     const logBody = document.querySelector('.log-body');
     const time = new Date().toLocaleTimeString('en-US', { hour12: false });
@@ -989,6 +1315,8 @@ function startDashboardUpdates() {
     // Keep only last 10 entries
     const lines = logBody.querySelectorAll('.log-line');
     if (lines.length > 10) lines[0].remove();
+
+    showToast(type, msg);
   }
 
   function updateServiceRows(containerMap) {
@@ -1084,6 +1412,9 @@ function startDashboardUpdates() {
 
       updateServiceRows(containerMap);
       updateCpuBars(containerMap);
+      if (dashboardCharts && typeof dashboardCharts.update === 'function') {
+        dashboardCharts.update(containerMap);
+      }
       logStatusChanges(containerMap);
     } catch (error) {
       const now = Date.now();
