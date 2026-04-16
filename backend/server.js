@@ -1,162 +1,151 @@
 const express = require('express');
-const { execSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
+const cors = require('cors');
+const Docker = require('dockerode');
 
 const app = express();
+const docker = new Docker({ socketPath: '/var/run/docker.sock' });
+
 const PORT = process.env.PORT || 3001;
 
-// Enable CORS for frontend requests
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
-  next();
-});
+const TARGET_CONTAINERS = [
+  { id: 'iac-nginx', displayName: 'web-app' },
+  { id: 'iac-postgres', displayName: 'postgres-db' },
+  { id: 'iac-redis', displayName: 'redis-cache' }
+];
 
-// Get running containers info
-app.get('/api/containers', (req, res) => {
-  try {
-    const output = execSync('docker ps --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}"', {
-      encoding: 'utf-8'
-    }).trim();
+app.use(cors());
 
-    if (!output) {
-      return res.json([]);
-    }
-
-    const containers = output.split('\n').map(line => {
-      const [id, name, image, status] = line.split('|');
-      
-      // Extract CPU usage
-      const statsOutput = execSync(`docker stats --no-stream ${id}`, {
-        encoding: 'utf-8'
-      }).split('\n')[1];
-      
-      const cpuStr = statsOutput ? statsOutput.split(/\s+/)[2] : '0%';
-      const cpu = parseInt(cpuStr) || 0;
-
-      // Extract port from image name
-      let port = 8081;
-      if (name.includes('iac-postgres')) port = 5432;
-      if (name.includes('iac-redis')) port = 6379;
-
-      return {
-        id,
-        name: name.replace('iac-', ''),
-        image,
-        port,
-        status: status.includes('Up') ? 'running' : 'stopped',
-        cpu: Math.min(cpu, 100),
-        startTime: Date.now() - 60000 // Approximate
-      };
-    });
-
-    res.json(containers);
-  } catch (error) {
-    console.error('Error fetching containers:', error.message);
-    res.json([]);
+function formatStatus(inspect) {
+  if (!inspect || !inspect.State) {
+    return 'not_found';
   }
-});
 
-// Get container logs
-app.get('/api/logs', (req, res) => {
+  if (inspect.State.Running) {
+    return 'running';
+  }
+
+  if (inspect.State.Status) {
+    return inspect.State.Status;
+  }
+
+  return 'stopped';
+}
+
+function getHostPort(inspect) {
+  const ports = inspect?.NetworkSettings?.Ports || {};
+  for (const bindings of Object.values(ports)) {
+    if (Array.isArray(bindings) && bindings[0] && bindings[0].HostPort) {
+      return Number(bindings[0].HostPort);
+    }
+  }
+  return null;
+}
+
+function getHealth(inspect) {
+  return inspect?.State?.Health?.Status || 'unknown';
+}
+
+function getUptimeSeconds(inspect) {
+  const startedAt = inspect?.State?.StartedAt;
+  if (!startedAt || startedAt.startsWith('0001-01-01')) {
+    return null;
+  }
+
+  const startMillis = Date.parse(startedAt);
+  if (Number.isNaN(startMillis)) {
+    return null;
+  }
+
+  return Math.max(0, Math.floor((Date.now() - startMillis) / 1000));
+}
+
+function calculateCpuPercent(stats) {
+  const cpuDelta = (stats?.cpu_stats?.cpu_usage?.total_usage || 0) -
+    (stats?.precpu_stats?.cpu_usage?.total_usage || 0);
+  const systemDelta = (stats?.cpu_stats?.system_cpu_usage || 0) -
+    (stats?.precpu_stats?.system_cpu_usage || 0);
+
+  if (cpuDelta <= 0 || systemDelta <= 0) {
+    return 0;
+  }
+
+  const onlineCpus = stats?.cpu_stats?.online_cpus ||
+    stats?.cpu_stats?.cpu_usage?.percpu_usage?.length || 1;
+
+  const percent = (cpuDelta / systemDelta) * onlineCpus * 100;
+  return Math.max(0, Math.min(100, Number(percent.toFixed(1))));
+}
+
+async function getContainerSnapshot(target) {
   try {
-    const containers = execSync('docker ps --format "{{.Names}}"', {
-      encoding: 'utf-8'
-    }).trim().split('\n');
+    const container = docker.getContainer(target.id);
+    const inspect = await container.inspect();
+    const status = formatStatus(inspect);
+    let cpuPercent = 0;
 
-    const logs = [];
-
-    containers.forEach(containerName => {
+    if (status === 'running') {
       try {
-        const output = execSync(`docker logs --tail 5 --timestamps ${containerName}`, {
-          encoding: 'utf-8'
-        }).trim();
-
-        output.split('\n').forEach(line => {
-          if (line) {
-            const timestamp = line.split(' ')[0] || new Date().toISOString();
-            const msg = line.substring(line.indexOf(' ') + 1);
-            
-            let type = 'info';
-            if (msg.includes('error') || msg.includes('Error')) type = 'error';
-            else if (msg.includes('warn') || msg.includes('Warn')) type = 'warn';
-            else if (msg.includes('started') || msg.includes('ready')) type = 'ok';
-
-            logs.push({
-              time: new Date(timestamp).toLocaleTimeString('en-US', { hour12: false }),
-              type,
-              msg: msg.substring(0, 100)
-            });
-          }
-        });
-      } catch (e) {
-        // Container might not have logs yet
+        const stats = await container.stats({ stream: false });
+        cpuPercent = calculateCpuPercent(stats);
+      } catch (error) {
+        cpuPercent = 0;
       }
-    });
-
-    // Return last 10 logs
-    res.json(logs.slice(-10));
-  } catch (error) {
-    console.error('Error fetching logs:', error.message);
-    res.json([]);
-  }
-});
-
-// Get container inspect data (advanced info)
-app.get('/api/containers/:id', (req, res) => {
-  try {
-    const output = execSync(`docker inspect ${req.params.id}`, {
-      encoding: 'utf-8'
-    });
-    const data = JSON.parse(output)[0];
-
-    res.json({
-      id: data.Id.substring(0, 12),
-      name: data.Name.replace('/', ''),
-      image: data.Config.Image,
-      status: data.State.Status,
-      created: data.Created,
-      env: data.Config.Env || [],
-      mounts: data.Mounts || [],
-      ports: data.NetworkSettings.Ports || {}
-    });
-  } catch (error) {
-    res.status(404).json({ error: 'Container not found' });
-  }
-});
-
-// Get simulated terraform state (from file if exists)
-app.get('/api/terraform-state', (req, res) => {
-  try {
-    const stateFile = path.join(__dirname, '../infra_state.json');
-    if (fs.existsSync(stateFile)) {
-      const state = JSON.parse(fs.readFileSync(stateFile, 'utf-8'));
-      res.json(state);
-    } else {
-      // Return default terraform resources
-      res.json([
-        { name: 'docker_network.sim_net', type: 'docker · bridge', id: '7a3f9c1b2e4d', status: 'applied' },
-        { name: 'docker_container.web_app', type: 'docker · container', id: 'c8f1a2b9d5e3', status: 'applied' },
-        { name: 'docker_container.postgres', type: 'docker · container', id: 'e2d4f6a8b0c1', status: 'applied' },
-        { name: 'docker_volume.pg_data', type: 'docker · volume', id: 'pg_data_vol', status: 'no-op' }
-      ]);
     }
+
+    return {
+      id: target.id,
+      name: inspect?.Name ? inspect.Name.replace('/', '') : target.id,
+      displayName: target.displayName,
+      image: inspect?.Config?.Image || 'unknown',
+      status,
+      health: getHealth(inspect),
+      uptimeSeconds: getUptimeSeconds(inspect),
+      hostPort: getHostPort(inspect),
+      cpuPercent
+    };
   } catch (error) {
-    console.error('Error fetching terraform state:', error.message);
-    res.json([]);
+    if (error?.statusCode === 404) {
+      return {
+        id: target.id,
+        name: target.id,
+        displayName: target.displayName,
+        image: 'n/a',
+        status: 'not_found',
+        health: 'unknown',
+        uptimeSeconds: null,
+        hostPort: null,
+        cpuPercent: 0
+      };
+    }
+
+    throw error;
+  }
+}
+
+app.get('/api/health', async (req, res) => {
+  try {
+    await docker.ping();
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: 'Docker daemon unreachable' });
   }
 });
 
-// Health check endpoint
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get('/api/containers', async (req, res) => {
+  try {
+    const containers = await Promise.all(TARGET_CONTAINERS.map(getContainerSnapshot));
+    res.json({
+      generatedAt: new Date().toISOString(),
+      containers
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to fetch container status',
+      details: error.message
+    });
+  }
 });
 
 app.listen(PORT, () => {
-  console.log(`IaC Simulator Backend API running on http://localhost:${PORT}`);
-  console.log(`GET /api/containers - List all running containers`);
-  console.log(`GET /api/containers/:id - Container details`);
-  console.log(`GET /api/logs - Container logs`);
-  console.log(`GET /api/terraform-state - Terraform resources`);
+  console.log(`Dashboard API listening on port ${PORT}`);
 });

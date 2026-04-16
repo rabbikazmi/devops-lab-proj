@@ -11,6 +11,7 @@
     --surface: #111318;
     --border: #1e2229;
     --border-bright: #2a3040;
+    --topbar-bg: rgba(10,12,16,0.85);
     --text: #e2e8f0;
     --muted: #4a5568;
     --dim: #2d3748;
@@ -25,6 +26,26 @@
     --blue-dim: #5eaeff18;
     --mono: 'JetBrains Mono', monospace;
     --sans: 'Space Grotesk', sans-serif;
+  }
+
+  body.light-theme {
+    --bg: #f3f6fb;
+    --surface: #ffffff;
+    --border: #dbe2ee;
+    --border-bright: #bfccdf;
+    --topbar-bg: rgba(243,246,251,0.88);
+    --text: #142033;
+    --muted: #4d607b;
+    --dim: #dbe2ee;
+    --green: #009a55;
+    --green-dim: #009a551a;
+    --green-mid: #007f46;
+    --amber: #d98600;
+    --amber-dim: #d9860018;
+    --red: #d63759;
+    --red-dim: #d6375915;
+    --blue: #1d72d8;
+    --blue-dim: #1d72d814;
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -57,7 +78,7 @@
     position: sticky;
     top: 0;
     z-index: 100;
-    background: rgba(10,12,16,0.85);
+    background: var(--topbar-bg);
     backdrop-filter: blur(12px);
     border-bottom: 1px solid var(--border);
     padding: 0 28px;
@@ -96,6 +117,26 @@
     font-family: var(--mono);
     font-size: 11px;
     color: var(--muted);
+  }
+
+  .theme-toggle {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    padding: 6px 10px;
+    border-radius: 5px;
+    border: 1px solid var(--border-bright);
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .theme-toggle:hover {
+    border-color: var(--blue);
+    color: var(--blue);
   }
 
   .live-badge {
@@ -534,6 +575,7 @@
     IAC-SIM
   </div>
   <div class="topbar-right">
+    <button class="theme-toggle" id="themeToggle" aria-pressed="false">light mode</button>
     <div class="live-badge">
       <div class="live-dot"></div>
       LIVE
@@ -761,71 +803,149 @@
 </main>
 
 <script>
-// Service availability checker
-async function checkServiceAvailability() {
-  const services = {
-    'nginx': { url: 'http://localhost:8081', timeout: 3000, checkEl: 'check-nginx' },
-    'postgres': { port: 5432, checkEl: 'check-postgres' },
-    'redis': { port: 6379, checkEl: 'check-redis' }
-  };
+const THEME_KEY = 'iac-dashboard-theme';
 
-  const serviceStatuses = {};
+function applyTheme(theme) {
+  const isLight = theme === 'light';
+  document.body.classList.toggle('light-theme', isLight);
 
-  async function testService(name, config) {
-    const checkEl = document.getElementById(config.checkEl);
+  const toggleButton = document.getElementById('themeToggle');
+  if (toggleButton) {
+    toggleButton.textContent = isLight ? 'dark mode' : 'light mode';
+    toggleButton.setAttribute('aria-pressed', isLight ? 'true' : 'false');
+  }
+}
+
+function initializeTheme() {
+  let savedTheme = null;
+  try {
+    savedTheme = localStorage.getItem(THEME_KEY);
+  } catch (e) {
+    savedTheme = null;
+  }
+
+  if (savedTheme === 'light' || savedTheme === 'dark') {
+    applyTheme(savedTheme);
+    return;
+  }
+
+  const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  applyTheme(prefersDark ? 'dark' : 'light');
+}
+
+function bindThemeToggle() {
+  const toggleButton = document.getElementById('themeToggle');
+  if (!toggleButton) return;
+
+  toggleButton.addEventListener('click', () => {
+    const currentTheme = document.body.classList.contains('light-theme') ? 'light' : 'dark';
+    const nextTheme = currentTheme === 'light' ? 'dark' : 'light';
+
+    applyTheme(nextTheme);
+    try {
+      localStorage.setItem(THEME_KEY, nextTheme);
+    } catch (e) {
+      // Continue without persistence when storage is unavailable.
+    }
+  });
+}
+
+const API_BASE_URL = 'http://localhost:3001/api';
+const TRACKED_CONTAINERS = ['iac-nginx', 'iac-postgres', 'iac-redis'];
+const CHECK_ID_BY_CONTAINER = {
+  'iac-nginx': 'check-nginx',
+  'iac-postgres': 'check-postgres',
+  'iac-redis': 'check-redis'
+};
+
+function formatUptime(seconds) {
+  if (seconds === null || seconds === undefined) {
+    return '--';
+  }
+
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+
+  return `${minutes}m ${remainingSeconds}s`;
+}
+
+function getDotClass(status) {
+  if (status === 'running') return 'dot-green';
+  if (status === 'starting' || status === 'created' || status === 'restarting') return 'dot-amber';
+  return 'dot-red';
+}
+
+function getBadgeClassForCount(runningCount) {
+  if (runningCount === 3) return 'badge-green';
+  if (runningCount > 0) return 'badge-amber';
+  return 'badge-red';
+}
+
+function getCpuBarClass(percent) {
+  return percent >= 70 ? 'fill-amber' : 'fill-green';
+}
+
+async function fetchContainerSnapshot() {
+  const response = await fetch(`${API_BASE_URL}/containers`, { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error('Failed to fetch Docker status');
+  }
+  return response.json();
+}
+
+function updateLoadingChecks(containerMap) {
+  TRACKED_CONTAINERS.forEach((containerId) => {
+    const checkEl = document.getElementById(CHECK_ID_BY_CONTAINER[containerId]);
+    if (!checkEl) return;
+
     const dot = checkEl.querySelector('.check-dot');
+    const snapshot = containerMap.get(containerId);
+    const running = snapshot && snapshot.status === 'running';
 
-    if (name === 'nginx') {
-      try {
-        const response = await fetch(config.url, {
-          method: 'HEAD',
-          mode: 'no-cors',
-          timeout: config.timeout
-        });
-        serviceStatuses[name] = true;
-        dot.className = 'check-dot ready';
-        checkEl.classList.remove('checking');
-        return true;
-      } catch (e) {
-        dot.className = 'check-dot checking';
-        return false;
-      }
-    } else {
-      // For postgres and redis, we can't directly test from browser
-      // So we'll consider them ready after nginx is up (simpler approach)
-      // In production, you'd have a backend endpoint to check
-      serviceStatuses[name] = true;
+    if (running) {
       dot.className = 'check-dot ready';
       checkEl.classList.remove('checking');
-      return true;
+    } else {
+      dot.className = 'check-dot checking';
+      checkEl.classList.add('checking');
     }
-  }
+  });
+}
 
-  // Check services every 1 second until all are available
-  let allReady = false;
+// Service availability checker
+async function checkServiceAvailability() {
   let checkAttempts = 0;
-  const maxAttempts = 60; // 60 seconds timeout
+  const maxAttempts = 60;
 
-  while (!allReady && checkAttempts < maxAttempts) {
+  while (checkAttempts < maxAttempts) {
     checkAttempts++;
-    
-    // Test services
-    await Promise.all([
-      testService('nginx', services.nginx),
-      new Promise(resolve => setTimeout(() => resolve(true), 100)),
-      testService('postgres', services.postgres),
-      new Promise(resolve => setTimeout(() => resolve(true), 100)),
-      testService('redis', services.redis)
-    ]);
 
-    allReady = serviceStatuses['nginx'] === true;
+    try {
+      const payload = await fetchContainerSnapshot();
+      const containerMap = new Map(payload.containers.map((container) => [container.id, container]));
+      updateLoadingChecks(containerMap);
 
-    if (!allReady) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      const allReady = TRACKED_CONTAINERS.every((containerId) => {
+        const snapshot = containerMap.get(containerId);
+        return snapshot && snapshot.status === 'running';
+      });
+
+      if (allReady) {
+        return true;
+      }
+    } catch (error) {
+      // API can be unavailable briefly while container starts.
     }
+
+    await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 
-  return allReady;
+  return false;
 }
 
 async function initializeDashboard() {
@@ -853,106 +973,8 @@ async function initializeDashboard() {
 }
 
 function startDashboardUpdates() {
-  // Dynamic dashboard updater
-  const CONTAINER_DATA = {
-    'iac-nginx': { name: 'web-app', image: 'nginx:alpine', port: 8081, startTime: Date.now() - 754000 },
-    'iac-postgres': { name: 'postgres-db', image: 'postgres:15', port: 5432, startTime: Date.now() - 751000 },
-    'iac-redis': { name: 'redis-cache', image: 'redis:7-alpine', port: 6379, startTime: Date.now() - 662000 }
-  };
-
-  const CPU_USAGE = {
-    'web-app': { current: 18, variants: [15, 18, 22, 19] },
-    'postgres-db': { current: 42, variants: [38, 42, 45, 40] },
-    'redis-cache': { current: 7, variants: [5, 7, 9, 6] }
-  };
-
-  const LOG_EVENTS = [
-    { time: '09:14:02', type: 'ok', msg: '✓ docker-compose up complete. 3 containers running.' },
-    { time: '09:14:05', type: 'info', msg: '→ ansible-playbook site.yml starting...' },
-    { time: '09:14:06', type: 'ok', msg: '✓ [web-app] nginx config pushed' },
-    { time: '09:14:07', type: 'ok', msg: '✓ [postgres] DB initialized: iac_simulator' },
-    { time: '09:14:09', type: 'warn', msg: '⚠ [redis] health check active' },
-    { time: '09:14:10', type: 'ok', msg: '✓ health check PASSED: web-app → HTTP 200' },
-    { time: '09:14:11', type: 'ok', msg: '✓ health check PASSED: postgres → accepting connections' },
-  ];
-
-  let containerStatuses = { 'iac-nginx': 'running', 'iac-postgres': 'running', 'iac-redis': 'running' };
-  let uptimes = {};
-
-  function getStatusDot(name) {
-    const status = containerStatuses[name];
-    if (status === 'running') return 'dot-green';
-    if (status === 'stopping') return 'dot-amber';
-    return 'dot-red';
-  }
-
-  function getStatusBadgeClass(name) {
-    const status = containerStatuses[name];
-    if (status === 'running') return 'badge-green';
-    if (status === 'stopping') return 'badge-amber';
-    return 'badge-red';
-  }
-
-  function getStatusText(name) {
-    const status = containerStatuses[name];
-    return status === 'running' ? 'healthy' : status;
-  }
-
-  function updateUptime(containerName) {
-    const startTime = CONTAINER_DATA[containerName].startTime;
-    const elapsed = Math.floor((Date.now() - startTime) / 1000);
-    const minutes = Math.floor(elapsed / 60);
-    const seconds = elapsed % 60;
-    uptimes[containerName] = `${minutes}m ${seconds}s`;
-    return uptimes[containerName];
-  }
-
-  function updateServiceRows() {
-    const containers = ['iac-nginx', 'iac-postgres', 'iac-redis'];
-    let healthyCount = 0;
-
-    containers.forEach((containerId, index) => {
-      const data = CONTAINER_DATA[containerId];
-      const status = containerStatuses[containerId];
-      const row = document.querySelectorAll('.service-row')[index + 1]; // Skip header row
-      
-      if (row) {
-        const uptime = updateUptime(containerId);
-        
-        // Update status dot
-        const dot = row.querySelector('.status-dot');
-        dot.className = `status-dot ${getStatusDot(containerId)}`;
-
-        // Update uptime
-        const uptimeEl = row.querySelector('.svc-uptime');
-        if (uptimeEl) uptimeEl.textContent = uptime;
-
-        if (status === 'running') healthyCount++;
-      }
-    });
-
-    // Update badge
-    const badge = document.querySelector('.card-badge.badge-green');
-    if (badge) badge.textContent = `${healthyCount} healthy`;
-  }
-
-  function updateCPUBars() {
-    const services = ['web-app', 'postgres-db', 'redis-cache'];
-    
-    services.forEach((service, idx) => {
-      const usage = CPU_USAGE[service];
-      usage.current = usage.variants[Math.floor(Math.random() * usage.variants.length)];
-      
-      const bars = document.querySelectorAll('.cpu-bar');
-      if (bars[idx]) {
-        const fill = bars[idx].querySelector('.cpu-fill');
-        fill.style.width = usage.current + '%';
-
-        const percentText = bars[idx].parentElement.querySelector('[style*="color:var"]');
-        if (percentText) percentText.textContent = usage.current + '%';
-      }
-    });
-  }
+  const previousStatuses = {};
+  let lastApiErrorAt = 0;
 
   function addLogEntry(type, msg) {
     const logBody = document.querySelector('.log-body');
@@ -969,48 +991,106 @@ function startDashboardUpdates() {
     if (lines.length > 10) lines[0].remove();
   }
 
-  function simulateEvents() {
-    const events = [
-      { type: 'ok', msg: '✓ Container health check passed' },
-      { type: 'info', msg: '→ Syncing state' },
-      { type: 'ok', msg: '✓ All services responding' },
-      { type: 'warn', msg: '⚠ High memory usage detected on postgres' },
-      { type: 'ok', msg: '✓ Network connectivity OK' }
-    ];
-    
-    const randomEvent = events[Math.floor(Math.random() * events.length)];
-    addLogEntry(randomEvent.type, randomEvent.msg);
-  }
+  function updateServiceRows(containerMap) {
+    let healthyCount = 0;
+    const rows = document.querySelectorAll('.service-row');
 
-  function updateStats() {
-    const running = Object.values(containerStatuses).filter(s => s === 'running').length;
-    const statsCards = document.querySelectorAll('.stat-value');
-    if (statsCards[0]) statsCards[0].textContent = running;
-  }
+    TRACKED_CONTAINERS.forEach((containerId, index) => {
+      const row = rows[index + 1];
+      if (!row) return;
 
-  function randomizeContainerStatus() {
-    // Simulate occasional status changes
-    if (Math.random() > 0.95) {
-      const containers = Object.keys(containerStatuses);
-      const randomContainer = containers[Math.floor(Math.random() * containers.length)];
-      
-      if (containerStatuses[randomContainer] === 'running') {
-        containerStatuses[randomContainer] = 'stopping';
-        setTimeout(() => {
-          containerStatuses[randomContainer] = 'running';
-        }, 2000);
+      const snapshot = containerMap.get(containerId) || {
+        displayName: containerId,
+        image: 'n/a',
+        status: 'not_found',
+        hostPort: '--',
+        uptimeSeconds: null
+      };
+
+      const dot = row.querySelector('.status-dot');
+      dot.className = `status-dot ${getDotClass(snapshot.status)}`;
+
+      const nameEl = row.querySelector('.svc-name');
+      const imageEl = row.querySelector('.svc-image');
+      const portEl = row.querySelector('.svc-port');
+      const uptimeEl = row.querySelector('.svc-uptime');
+
+      if (nameEl) nameEl.textContent = snapshot.displayName || snapshot.name;
+      if (imageEl) imageEl.textContent = snapshot.image;
+      if (portEl) portEl.textContent = snapshot.hostPort ? `:${snapshot.hostPort}` : ':--';
+      if (uptimeEl) {
+        uptimeEl.textContent = snapshot.status === 'running'
+          ? formatUptime(snapshot.uptimeSeconds)
+          : snapshot.status;
       }
+
+      if (snapshot.status === 'running') {
+        healthyCount++;
+      }
+    });
+
+    const headerBadge = document.querySelector('.grid-two .card .card-header .card-badge');
+    if (headerBadge) {
+      headerBadge.className = `card-badge ${getBadgeClassForCount(healthyCount)}`;
+      headerBadge.textContent = `${healthyCount} healthy`;
+    }
+
+    const statsCards = document.querySelectorAll('.stat-value');
+    if (statsCards[0]) {
+      statsCards[0].textContent = healthyCount;
     }
   }
 
-  function updateDashboard() {
-    updateServiceRows();
-    updateCPUBars();
-    updateStats();
-    randomizeContainerStatus();
-    
-    if (Math.random() > 0.7) {
-      simulateEvents();
+  function updateCpuBars(containerMap) {
+    const bars = document.querySelectorAll('.cpu-bar');
+
+    TRACKED_CONTAINERS.forEach((containerId, idx) => {
+      const snapshot = containerMap.get(containerId);
+      const usage = snapshot && snapshot.status === 'running' ? Number(snapshot.cpuPercent || 0) : 0;
+
+      if (!bars[idx]) return;
+      const fill = bars[idx].querySelector('.cpu-fill');
+      fill.className = `cpu-fill ${getCpuBarClass(usage)}`;
+      fill.style.width = `${Math.min(100, Math.max(0, usage))}%`;
+
+      const percentText = bars[idx].parentElement.querySelector('[style*="color:var"]');
+      if (percentText) {
+        percentText.textContent = `${usage.toFixed(0)}%`;
+      }
+    });
+  }
+
+  function logStatusChanges(containerMap) {
+    TRACKED_CONTAINERS.forEach((containerId) => {
+      const snapshot = containerMap.get(containerId);
+      if (!snapshot) return;
+
+      const previous = previousStatuses[containerId];
+      const current = snapshot.status;
+
+      if (previous && previous !== current) {
+        const type = current === 'running' ? 'ok' : 'warn';
+        addLogEntry(type, `${snapshot.displayName} changed state: ${previous} -> ${current}`);
+      }
+
+      previousStatuses[containerId] = current;
+    });
+  }
+
+  async function updateDashboard() {
+    try {
+      const payload = await fetchContainerSnapshot();
+      const containerMap = new Map(payload.containers.map((container) => [container.id, container]));
+
+      updateServiceRows(containerMap);
+      updateCpuBars(containerMap);
+      logStatusChanges(containerMap);
+    } catch (error) {
+      const now = Date.now();
+      if (now - lastApiErrorAt > 10000) {
+        addLogEntry('err', 'Dashboard API unreachable. Check dashboard-api container.');
+        lastApiErrorAt = now;
+      }
     }
   }
 
@@ -1029,7 +1109,11 @@ function startDashboardUpdates() {
 }
 
 // Initialize on page load
-window.addEventListener('DOMContentLoaded', initializeDashboard);
+window.addEventListener('DOMContentLoaded', () => {
+  initializeTheme();
+  bindThemeToggle();
+  initializeDashboard();
+});
 </script>
 
 </body>
